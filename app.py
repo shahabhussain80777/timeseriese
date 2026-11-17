@@ -1,79 +1,75 @@
 
-import streamlit as st
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-st.set_page_config(
-    page_title="Time Series Prediction",
-    page_icon="📈"
-)
+app = FastAPI()
 
-st.title("Time Series Prediction")
-st.write("Predict the next value using RNN, LSTM and GRU.")
-
+BASE_DIR = Path(__file__).resolve().parent
 SCALE = 500.0
 
-@st.cache_resource
+models = None
+
 def load_models():
-    rnn = tf.keras.models.load_model("rnn_model.keras")
-    lstm = tf.keras.models.load_model("lstm_model.keras")
-    gru = tf.keras.models.load_model("gru_model.keras")
+    global models
 
-    return rnn, lstm, gru
+    if models is None:
+        models = {
+            "RNN": tf.keras.models.load_model(
+                BASE_DIR / "rnn_model.keras"
+            ),
+            "LSTM": tf.keras.models.load_model(
+                BASE_DIR / "lstm_model.keras"
+            ),
+            "GRU": tf.keras.models.load_model(
+                BASE_DIR / "gru_model.keras"
+            )
+        }
 
-try:
-    rnn_model, lstm_model, gru_model = load_models()
+    return models
 
-    st.success("All three models loaded successfully!")
 
-    st.subheader("Enter Previous Three Values")
+class PredictionInput(BaseModel):
+    values: list[float] = Field(min_length=3, max_length=3)
 
-    user_input = st.text_input(
-        "Enter values separated by commas:",
-        "30,40,50"
-    )
 
-    if st.button("Predict Next Value"):
+@app.get("/api/health")
+def health():
+    return {"status": "API is running"}
 
-        try:
-            values = [
-                float(x.strip())
-                for x in user_input.split(",")
-            ]
 
-            if len(values) != 3:
-                st.error("Please enter exactly three values.")
+@app.post("/api/predict")
+def predict(data: PredictionInput):
 
-            else:
-                input_data = np.array(
-                    values,
-                    dtype=np.float32
-                ) / SCALE
+    try:
+        loaded_models = load_models()
 
-                input_data = input_data.reshape(
-                    1, 3, 1
-                )
+        input_data = np.array(
+            data.values, dtype=np.float32
+        ) / SCALE
 
-                rnn_prediction = (
-                    rnn_model.predict(input_data, verbose=0)[0][0] * SCALE
-                )
+        input_data = input_data.reshape(1, 3, 1)
 
-                lstm_prediction = (
-                    lstm_model.predict(input_data, verbose=0)[0][0] * SCALE
-                )
+        results = {}
 
-                gru_prediction = (
-                    gru_model.predict(input_data, verbose=0)[0][0] * SCALE
-                )
+        for name, model in loaded_models.items():
+            prediction = model.predict(
+                input_data, verbose=0
+            )[0][0]
 
-                st.subheader("Prediction Results")
+            results[name] = round(
+                float(prediction * SCALE), 2
+            )
 
-                st.metric("RNN Prediction", f"{rnn_prediction:.2f}")
-                st.metric("LSTM Prediction", f"{lstm_prediction:.2f}")
-                st.metric("GRU Prediction", f"{gru_prediction:.2f}")
+        return {
+            "input": data.values,
+            "predictions": results
+        }
 
-        except ValueError:
-            st.error("Enter valid numbers separated by commas.")
-
-except Exception as e:
-    st.error(f"Model loading error: {e}")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
