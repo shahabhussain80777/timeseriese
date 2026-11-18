@@ -1,4 +1,5 @@
-
-streamlit
-tensorflow
+fastapi
+uvicorn
+onnxruntime
 numpy
+pydantic
